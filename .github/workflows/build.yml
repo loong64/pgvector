@@ -1,0 +1,56 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        default: '0.8.0'
+        description: 'Package version'
+        type: string
+        required: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [13, 14, 15, 16, 17]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: pgvector/pgvector
+          ref: v${{ github.event.inputs.version }}
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare build
+        run: |
+          sed -i 's@FROM postgres@FROM ghcr.io/loong64/postgres@g' Dockerfile
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/loong64
+          push: true
+          build-args: |
+            PG_MAJOR=${{ matrix.postgres }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pgvector:pg${{ matrix.postgres }}
+            ghcr.io/${{ github.repository_owner }}/pgvector:${{ github.event.inputs.version }}-pg${{ matrix.postgres }}
+          outputs: type=image,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
