@@ -4,24 +4,56 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        default: '0.8.0'
+        default: 'latest'
         description: 'Package version'
         type: string
         required: true
+  schedule:
+    - cron: '0 0 4 * *'
 
 jobs:
-  ubuntu:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - name: Get Version
+        id: get-version
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            version="latest"
+          else
+            version=${{ github.event.inputs.version }}
+          fi
+          if [ "$version" = "latest" ]; then
+            version=$(curl -sSL https://api.github.com/repos/pgvector/pgvector/tags | jq -r '.[0].name')
+          fi
+          if [ -z "$version" ] || [ "$version" == "null" ]; then
+            echo "Failed to get latest version"
+            exit 1
+          fi
+
+          echo "version=${version#v}" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "========== Build Args =========="
+          echo "version=${version#v}"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      version: ${{ needs.check.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
-        postgres: [13, 14, 15, 16, 17]
+        postgres: [14, 15, 16, 17, 18]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: pgvector/pgvector
-          ref: v${{ github.event.inputs.version }}
+          ref: v${{ env.version }}
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -48,9 +80,10 @@ jobs:
           push: true
           build-args: |
             PG_MAJOR=${{ matrix.postgres }}
+            DEBIAN_CODENAME=trixie
           tags: |
-            ghcr.io/${{ github.repository_owner }}/pgvector:pg${{ matrix.postgres }}
-            ghcr.io/${{ github.repository_owner }}/pgvector:${{ github.event.inputs.version }}-pg${{ matrix.postgres }}
+            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:pg${{ matrix.postgres }}
+            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:${{ env.version }}-pg${{ matrix.postgres }}
           outputs: type=image,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
