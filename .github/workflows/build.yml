@@ -13,7 +13,7 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
@@ -50,7 +50,7 @@ jobs:
         postgres: [14, 15, 16, 17, 18]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           repository: pgvector/pgvector
           ref: v${{ env.version }}
@@ -82,7 +82,26 @@ jobs:
             PG_MAJOR=${{ matrix.postgres }}
             DEBIAN_CODENAME=trixie
           tags: |
-            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:pg${{ matrix.postgres }}
-            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:${{ env.version }}-pg${{ matrix.postgres }}
+            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:pg${{ matrix.postgres }}-loong64
+            ghcr.io/${{ github.repository_owner }}/pgvector/pgvector:${{ env.version }}-pg${{ matrix.postgres }}-loong64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Prepare configuration
+        run: |
+          wget -qO- https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz | sudo tar -xzf - -C /usr/local/bin/ crane
+          sudo chmod +x /usr/local/bin/crane
+          sudo chown root:root /usr/local/bin/crane
+
+      - name: Pull and Push Images
+        if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+        run: |
+          version="pg${{ matrix.postgres }}"
+          full_version="${{ env.version }}-pg${{ matrix.postgres }}"
+          repo="ghcr.io/${{ github.repository_owner }}/pgvector/pgvector"
+          suite="trixie"
+
+          crane index append -t "$repo:$full_version-$suite" \
+            -m "$repo:$full_version-loong64" \
+            -m "pgvector/pgvector:$full_version-$suite"
+          crane cp "$repo:$full_version-$suite" "$repo:$version-$suite"
